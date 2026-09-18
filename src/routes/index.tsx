@@ -17,10 +17,11 @@ export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Ghost SMS — Silent delivery through your device network" },
-      { name: "description", content: "Ghost SMS: broadcast SMS through your Firebase-connected device fleet in realtime, on a cron interval, or scheduled for a future moment." },
+      { name: "description", content: "Ghost SMS: broadcast SMS through your Firebase-connected device fleet in realtime." },
       { property: "og:title", content: "Ghost SMS" },
-      { property: "og:description", content: "Realtime, cron, and scheduled SMS broadcasts through your device fleet." },
+      { property: "og:description", content: "Realtime SMS broadcasts through your device fleet." },
       { property: "og:type", content: "website" },
+
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
@@ -261,8 +262,6 @@ async function dispatchToDevice(
  * Root page
  * ============================================================ */
 
-type Tab = "realtime" | "schedule";
-
 function GhostSmsPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState("");
@@ -271,7 +270,6 @@ function GhostSmsPage() {
   const [devices, setDevices] = useState<DeviceInfo[]>(() => loadCachedDevices());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [tab, setTab] = useState<Tab>("realtime");
   const abortRef = useRef<AbortController | null>(null);
   const dbsRef = useRef<DbEntry[]>([]);
 
@@ -300,7 +298,6 @@ function GhostSmsPage() {
       }
     });
 
-    // Asynchronously fetch globally scheduled jobs from Cloudflare KV
     void getJobsServer().then((cloudJobs) => {
       if (cloudJobs && Array.isArray(cloudJobs) && cloudJobs.length > 0) {
         const local = loadJobs();
@@ -319,35 +316,11 @@ function GhostSmsPage() {
     });
   }, []);
 
-  // Sync scheduled jobs periodically from Cloudflare KV
-  useEffect(() => {
-    const t = setInterval(() => {
-      void getJobsServer().then((cloudJobs) => {
-        if (cloudJobs && Array.isArray(cloudJobs)) {
-          const local = loadJobs();
-          const jobMap = new Map<string, ScheduledJob>();
-          for (const j of local) jobMap.set(j.id, j);
-          for (const c of cloudJobs) {
-            const existing = jobMap.get(c.id);
-            if (!existing || c.status === "done" || c.status === "running" || c.status === "cancelled") {
-              jobMap.set(c.id, c as ScheduledJob);
-            }
-          }
-          const mergedJobs = Array.from(jobMap.values()).sort((a, b) => b.createdAt - a.createdAt);
-          saveJobs(mergedJobs);
-          setJobs(mergedJobs);
-        }
-      });
-    }, 5000);
-    return () => clearInterval(t);
-  }, []);
-
   const reload = useCallback(async (entries: DbEntry[]) => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     
-    // Request server in sub-batches of 25 database URLs in parallel
     const BATCH_SIZE = 25;
     const chunks: DbEntry[][] = [];
     for (let i = 0; i < entries.length; i += BATCH_SIZE) {
@@ -409,7 +382,6 @@ function GhostSmsPage() {
 
     updateJob({ status: "running" });
 
-    // Step 1: Sub-batched parallel fetch of DB data across all databases from client (max 25 DBs per server call)
     const entries = dbsRef.current.length > 0 ? dbsRef.current : loadDbs();
     const BATCH_SIZE = 25;
     const chunks: DbEntry[][] = [];
@@ -427,7 +399,6 @@ function GhostSmsPage() {
     setDevices(freshDevices);
     saveCachedDevices(freshDevices);
 
-    // Step 2: Extract all online devices
     const online = freshDevices.filter((d) => d.online);
     updateJob({ totalTargets: online.length, okCount: 0, failCount: 0 });
 
@@ -436,7 +407,6 @@ function GhostSmsPage() {
       return;
     }
 
-    // Step 3: Dispatch SMS payload from client to all online devices in parallel
     let ok = 0, fail = 0;
     await Promise.all(online.map(async (d) => {
       const r = await dispatchToDevice(d.dbUrl, d.id, job.number, job.message, job.sim);
@@ -458,66 +428,20 @@ function GhostSmsPage() {
     updateJob({ status: "done", okCount: ok, failCount: fail, totalTargets: online.length });
   }, []);
 
-  // Scheduler tick for scheduled jobs
-  useEffect(() => {
-    const t = setInterval(() => {
-      const current = loadJobs();
-      const due = current.filter((j) => j.status === "pending" && j.runAt <= Date.now());
-      if (due.length === 0) return;
-      void getJobsServer().then((cloudJobs) => {
-        const cloudList = Array.isArray(cloudJobs) ? (cloudJobs as ScheduledJob[]) : [];
-        for (const j of due) {
-          const cloudMatch = cloudList.find((c) => c.id === j.id);
-          if (cloudMatch && (cloudMatch.status === "done" || cloudMatch.status === "running" || cloudMatch.status === "cancelled")) {
-            const list = loadJobs().map((item) => item.id === j.id ? { ...item, status: cloudMatch.status, totalTargets: cloudMatch.totalTargets, okCount: cloudMatch.okCount, failCount: cloudMatch.failCount } : item);
-            saveJobs(list);
-            setJobs(list);
-          } else {
-            void executeJob(j.id);
-          }
-        }
-      });
-    }, 2000);
-    return () => clearInterval(t);
-  }, [executeJob]);
-
-  const submitJob = (payload: { number: string; message: string; sim: "0" | "1"; runAt: number; kind: "realtime" | "schedule" }) => {
+  const submitJob = (payload: { number: string; message: string; sim: "0" | "1"; runAt: number }) => {
     const job: ScheduledJob = {
       id: crypto.randomUUID(),
       number: payload.number, message: payload.message, sim: payload.sim,
       runAt: payload.runAt, createdAt: Date.now(),
-      status: "pending", kind: payload.kind,
+      status: "pending", kind: "realtime",
     };
     const next = [job, ...jobs];
     setJobs(next); saveJobs(next);
     cloudPut(`jobs/${job.id}`, job);
     void saveJobServer({ data: job });
 
-    if (job.runAt <= Date.now() + 500) {
-      void executeJob(job.id);
-    }
+    void executeJob(job.id);
     return job;
-  };
-
-  const cancelJob = (id: string) => {
-    const next = loadJobs().map((j) => j.id === id && j.status === "pending" ? { ...j, status: "cancelled" as const } : j);
-    saveJobs(next); setJobs(next);
-    cloudPatch(`jobs/${id}`, { status: "cancelled" });
-    void updateJobServer({ data: { id, patch: { status: "cancelled" } } });
-  };
-
-  const deleteJob = (id: string) => {
-    const next = loadJobs().filter((j) => j.id !== id);
-    saveJobs(next); setJobs(next);
-    void cloudDelete(`jobs/${id}`);
-    void deleteJobServer({ data: { id } });
-  };
-
-  const clearAllScheduledJobs = () => {
-    const next = loadJobs().filter((j) => j.kind !== "schedule");
-    saveJobs(next); setJobs(next);
-    void cloudDelete(`jobs`);
-    void clearJobsServer();
   };
 
   const clearLogs = () => {
@@ -590,27 +514,8 @@ function GhostSmsPage() {
       <main className="mx-auto max-w-3xl px-4 pb-24 pt-8">
         <StatsRow total={stats.total} online={stats.online} offline={stats.offline} databases={dbs.length} loading={dbs.length > 0 && devices.length === 0} />
 
-        <Tabs tab={tab} setTab={setTab} counts={{
-          schedule: jobs.filter((j) => j.kind === "schedule" && j.status === "pending").length,
-        }} />
-
-        {tab === "realtime" && (
-          <>
-            <RealtimeCard onSubmit={(p) => submitJob({ ...p, runAt: Date.now(), kind: "realtime" })} onlineCount={stats.online} disabled={dbs.length === 0} />
-            <RecentJobs jobs={jobs.filter((j) => j.status === "running" || j.status === "done" || (j.kind === "realtime" && j.status === "pending"))} onClearLogs={clearLogs} />
-          </>
-        )}
-
-        {tab === "schedule" && (
-          <SchedulePanel
-            jobs={jobs.filter((j) => j.kind === "schedule")}
-            onSubmit={(p) => submitJob({ ...p, kind: "schedule" })}
-            onCancel={cancelJob}
-            onDelete={deleteJob}
-            onClearAll={clearAllScheduledJobs}
-            disabled={dbs.length === 0}
-          />
-        )}
+        <RealtimeCard onSubmit={(p) => submitJob({ ...p, runAt: Date.now() })} onlineCount={stats.online} disabled={dbs.length === 0} />
+        <RecentJobs jobs={jobs} onClearLogs={clearLogs} />
       </main>
 
       {settingsOpen && (
@@ -689,193 +594,8 @@ function StatCard({ label, value, tone, pulse }: { label: string; value: number 
   );
 }
 
-/* ============================================================
- * Tabs
- * ============================================================ */
 
-function Tabs({ tab, setTab, counts }: { tab: Tab; setTab: (t: Tab) => void; counts: { schedule: number } }) {
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
-    { id: "realtime", label: "Realtime" },
-    { id: "schedule", label: "Schedule", badge: counts.schedule },
-  ];
-  return (
-    <div className="mt-6 flex gap-1 rounded-full border border-white/10 bg-white/[0.02] p-1 text-sm">
-      {tabs.map((t) => (
-        <button key={t.id} onClick={() => setTab(t.id)}
-          className={"flex-1 rounded-full px-3 py-2 font-medium transition " +
-            (tab === t.id ? "bg-violet-500 text-black shadow" : "text-neutral-400 hover:text-neutral-200")}>
-          {t.label}
-          {t.badge ? <span className={"ml-2 rounded-full px-2 py-0.5 text-[10px] " + (tab === t.id ? "bg-black/20 text-black" : "bg-white/10 text-neutral-300")}>{t.badge}</span> : null}
-        </button>
-      ))}
-    </div>
-  );
-}
 
-/* ============================================================
- * Realtime card
- * ============================================================ */
-
-function RealtimeCard({ onSubmit, onlineCount, disabled }: {
-  onSubmit: (p: { number: string; message: string; sim: "0" | "1" }) => ScheduledJob;
-  onlineCount: number; disabled: boolean;
-}) {
-  const [number, setNumber] = useState("");
-  const [message, setMessage] = useState("");
-  const [sim, setSim] = useState<"0" | "1">("0");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  const canSubmit = number.trim() && message.trim() && !disabled;
-  const go = () => {
-    if (!canSubmit) return;
-    if (onlineCount === 0) { setErrorMsg("No online devices right now."); setStatus("error"); setTimeout(() => setStatus("idle"), 2500); return; }
-    setStatus("sending");
-    onSubmit({ number: number.trim(), message, sim });
-    setMessage("");
-    setTimeout(() => setStatus("sent"), 400);
-    setTimeout(() => setStatus("idle"), 2200);
-  };
-
-  return (
-    <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-      <div className="flex items-center gap-2">
-        <h2 className="text-lg font-semibold">Realtime broadcast</h2>
-        <span className="ml-auto text-xs text-neutral-500">Fires from <span className="text-emerald-300">{onlineCount}</span> device{onlineCount === 1 ? "" : "s"}</span>
-      </div>
-      <div className="mt-4 flex flex-col gap-3 text-sm">
-        <Field label="Recipient number">
-          <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="e.g. +919876543210"
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
-        </Field>
-        <Field label="Message body">
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder="Type the SMS the fleet will send…"
-            className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
-          <div className="mt-1 text-right text-[10px] text-neutral-500">{message.length} chars</div>
-        </Field>
-        <SimPicker sim={sim} setSim={setSim} />
-        <button disabled={!canSubmit || status === "sending"} onClick={go}
-          className={"mt-2 rounded-lg py-3.5 text-sm font-semibold tracking-wide transition " +
-            (status === "sent" ? "bg-emerald-500 text-black"
-            : status === "error" ? "bg-rose-500 text-black"
-            : "bg-violet-500 text-black hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed")}>
-          {status === "sending" ? "Broadcasting…"
-            : status === "sent" ? "Broadcast sent ✓"
-            : status === "error" ? (errorMsg || "Failed")
-            : `GO — broadcast to ${onlineCount} device${onlineCount === 1 ? "" : "s"}`}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-/* ============================================================
- * Schedule panel
- * ============================================================ */
-
-function SchedulePanel({ jobs, onSubmit, onCancel, onDelete, onClearAll, disabled }: {
-  jobs: ScheduledJob[];
-  onSubmit: (p: { number: string; message: string; sim: "0" | "1"; runAt: number }) => ScheduledJob;
-  onCancel: (id: string) => void;
-  onDelete: (id: string) => void;
-  onClearAll: () => void;
-  disabled: boolean;
-}) {
-  const [number, setNumber] = useState("");
-  const [message, setMessage] = useState("");
-  const [sim, setSim] = useState<"0" | "1">("0");
-  const [when, setWhen] = useState<string>(() => localDatetime(Date.now() + 5 * 60_000));
-  const [err, setErr] = useState("");
-
-  const submit = () => {
-    setErr("");
-    if (!number.trim() || !message.trim()) { setErr("Number and message are required."); return; }
-    const runAt = new Date(when).getTime();
-    if (Number.isNaN(runAt) || runAt < Date.now() - 2000) { setErr("Pick a future time."); return; }
-    onSubmit({ number: number.trim(), message, sim, runAt });
-    setMessage("");
-  };
-
-  const sorted = [...jobs].sort((a, b) => a.runAt - b.runAt);
-
-  return (
-    <>
-      <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">Schedule broadcast</h2>
-          <span className="ml-auto text-xs text-neutral-500">One-off, at a chosen moment</span>
-        </div>
-        <div className="mt-4 flex flex-col gap-3 text-sm">
-          <Field label="Recipient number">
-            <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="+919876543210"
-              className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
-          </Field>
-          <Field label="Message body">
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
-          </Field>
-          <div className="flex flex-wrap items-end gap-3">
-            <SimPicker sim={sim} setSim={setSim} />
-            <div className="flex-1 min-w-[220px]">
-              <Field label="Deliver at">
-                <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-violet-500/60" />
-              </Field>
-              <span className="text-[10px] text-neutral-500">Uses your device timezone. Stored in Firebase and delivered from any open browser.</span>
-            </div>
-          </div>
-          {err && <div className="text-xs text-rose-400">{err}</div>}
-          <button onClick={submit} disabled={disabled}
-            className="mt-2 rounded-lg bg-violet-500 py-3.5 text-sm font-semibold text-black hover:bg-violet-400 disabled:opacity-40">
-            + Schedule
-          </button>
-        </div>
-      </section>
-
-      <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold">Scheduled broadcasts</h3>
-          <span className="text-xs text-neutral-500">({sorted.length} total)</span>
-          {sorted.length > 0 && (
-            <button onClick={onClearAll} className="ml-auto rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/20">
-              Clear all
-            </button>
-          )}
-        </div>
-        {sorted.length === 0 ? (
-          <div className="py-6 text-center text-xs text-neutral-500">Nothing scheduled yet.</div>
-        ) : (
-          <ul className="mt-3 flex flex-col gap-2">
-            {sorted.map((j) => {
-              const badge = j.status === "pending" ? "text-sky-300 border-sky-500/30 bg-sky-500/10"
-                : j.status === "running" ? "text-amber-300 border-amber-500/30 bg-amber-500/10 animate-pulse"
-                : j.status === "done" ? "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
-                : "text-neutral-400 border-white/10 bg-white/5";
-              return (
-                <li key={j.id} className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className={"rounded-full border px-2 py-0.5 uppercase tracking-widest text-[10px] " + badge}>{j.status}</span>
-                    <span className="font-mono">{j.number}</span>
-                    <span className="text-neutral-500">SIM {Number(j.sim) + 1}</span>
-                    <span className="ml-auto text-neutral-400">{new Date(j.runAt).toLocaleString()}</span>
-                    {j.status === "pending" && (
-                      <button onClick={() => onCancel(j.id)} className="ml-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-200 hover:bg-amber-500/20">Cancel</button>
-                    )}
-                    <button onClick={() => onDelete(j.id)} className="ml-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-200 hover:bg-rose-500/20">Delete</button>
-                  </div>
-                  <div className="mt-1 truncate text-neutral-400">{j.message}</div>
-                  {j.status === "done" && (
-                    <div className="mt-1 text-neutral-500">{j.okCount ?? 0}/{j.totalTargets ?? 0} ok · {j.failCount ?? 0} failed</div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-    </>
-  );
-}
 
 /* ============================================================
  * Shared inputs

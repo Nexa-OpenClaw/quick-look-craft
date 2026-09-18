@@ -15,10 +15,6 @@
       "binding": "GHOST_KV",
       "id": "82a9360bce3347a9b482f1e5d5ed3ad8"
     }
-  ],
-  "triggers": {
-    "crons": [
-      "* * * * *"
-    ]
-  }
+  ]
 }
+

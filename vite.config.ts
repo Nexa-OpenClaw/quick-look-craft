@@ -12,7 +12,5 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  nitro: {
-    plugins: ["./src/plugins/scheduled.ts"],
-  },
 });
+

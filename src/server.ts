@@ -2,7 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import { processScheduledJobsOnEdge, fetchSingleDbWithTimeout, type ServerDbEntry } from "./lib/devices";
+import { fetchSingleDbWithTimeout, type ServerDbEntry } from "./lib/devices";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -75,12 +75,5 @@ export default {
       });
     }
   },
-
-  async scheduled(event: unknown, env: unknown, ctx: unknown) {
-    try {
-      await processScheduledJobsOnEdge(env);
-    } catch (err) {
-      console.error("Edge cron error:", err);
-    }
-  },
 };
+
