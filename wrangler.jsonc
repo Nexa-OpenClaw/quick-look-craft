@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ghost-sms-fleet",
+  "main": ".output/server/index.mjs",
+  "compatibility_date": "2024-11-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".output/public",
+    "binding": "STATIC_ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "GHOST_KV",
+      "id": "82a9360bce3347a9b482f1e5d5ed3ad8"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  }
+}
