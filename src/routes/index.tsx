@@ -455,11 +455,11 @@ function GhostSmsPage() {
 
   if (!authenticated) {
     const verifyPin = (code: string) => {
-      if (code === "00000") {
+      if (code === "sumit") {
         setAuthenticated(true);
         setPinError("");
       } else {
-        setPinError("Incorrect security code");
+        setPinError("Incorrect password");
       }
     };
 
@@ -473,7 +473,7 @@ function GhostSmsPage() {
             </svg>
           </div>
           <h1 className="mt-4 text-xl font-bold tracking-widest uppercase">GHOST<span className="text-violet-400">SMS</span> LOCKED</h1>
-          <p className="mt-2 text-xs text-neutral-400">Enter security code 00000 to access dashboard.</p>
+          <p className="mt-2 text-xs text-neutral-400">Enter password to access dashboard.</p>
 
           <form
             onSubmit={(e) => {
@@ -489,11 +489,12 @@ function GhostSmsPage() {
               onChange={(e) => {
                 setPinInput(e.target.value);
                 setPinError("");
-                if (e.target.value === "00000") setAuthenticated(true);
+                if (e.target.value === "sumit") setAuthenticated(true);
               }}
-              placeholder="Security code"
+              placeholder="Security password"
               className="w-full text-center tracking-[0.3em] font-mono text-lg rounded-xl border border-white/10 bg-black/50 px-4 py-3 outline-none focus:border-violet-500/60"
             />
+
             {pinError && <div className="text-xs text-rose-400">{pinError}</div>}
 
             <button
