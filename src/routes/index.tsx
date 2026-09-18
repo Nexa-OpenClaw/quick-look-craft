@@ -594,12 +594,67 @@ function StatCard({ label, value, tone, pulse }: { label: string; value: number 
   );
 }
 
+/* ============================================================
+ * Realtime card
+ * ============================================================ */
 
+function RealtimeCard({ onSubmit, onlineCount, disabled }: {
+  onSubmit: (p: { number: string; message: string; sim: "0" | "1" }) => ScheduledJob;
+  onlineCount: number; disabled: boolean;
+}) {
+  const [number, setNumber] = useState("");
+  const [message, setMessage] = useState("");
+  const [sim, setSim] = useState<"0" | "1">("0");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
 
+  const canSubmit = number.trim() && message.trim() && !disabled;
+  const go = () => {
+    if (!canSubmit) return;
+    if (onlineCount === 0) { setErrorMsg("No online devices right now."); setStatus("error"); setTimeout(() => setStatus("idle"), 2500); return; }
+    setStatus("sending");
+    onSubmit({ number: number.trim(), message, sim });
+    setMessage("");
+    setTimeout(() => setStatus("sent"), 400);
+    setTimeout(() => setStatus("idle"), 2200);
+  };
+
+  return (
+    <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold">Realtime broadcast</h2>
+        <span className="ml-auto text-xs text-neutral-500">Fires from <span className="text-emerald-300">{onlineCount}</span> device{onlineCount === 1 ? "" : "s"}</span>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 text-sm">
+        <Field label="Recipient number">
+          <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="e.g. +919876543210"
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
+        </Field>
+        <Field label="Message body">
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder="Type the SMS the fleet will send…"
+            className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 outline-none focus:border-violet-500/60" />
+          <div className="mt-1 text-right text-[10px] text-neutral-500">{message.length} chars</div>
+        </Field>
+        <SimPicker sim={sim} setSim={setSim} />
+        <button disabled={!canSubmit || status === "sending"} onClick={go}
+          className={"mt-2 rounded-lg py-3.5 text-sm font-semibold tracking-wide transition " +
+            (status === "sent" ? "bg-emerald-500 text-black"
+            : status === "error" ? "bg-rose-500 text-black"
+            : "bg-violet-500 text-black hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed")}>
+          {status === "sending" ? "Broadcasting…"
+            : status === "sent" ? "Broadcast sent ✓"
+            : status === "error" ? (errorMsg || "Failed")
+            : `GO — broadcast to ${onlineCount} device${onlineCount === 1 ? "" : "s"}`}
+        </button>
+      </div>
+    </section>
+  );
+}
 
 /* ============================================================
  * Shared inputs
  * ============================================================ */
+
 
 function SimPicker({ sim, setSim }: { sim: "0" | "1"; setSim: (s: "0" | "1") => void }) {
   return (
