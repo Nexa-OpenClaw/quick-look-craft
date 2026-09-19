@@ -201,10 +201,11 @@ export function saveCachedDevices(devices: DeviceInfo[]) {
 
 function cloudBase(): string | null {
   const dbs = loadDbs();
-  if (dbs.length === 0) return null;
-  const first = dbs[0];
+  const defaults = getDefaultDbEntries();
+  const first = dbs.length > 0 ? dbs[0] : defaults[0];
   return first ? first.url.replace(/\/$/, "") : null;
 }
+
 function cloudPut(path: string, body: unknown) {
   const base = cloudBase();
   if (!base) return;
@@ -277,26 +278,36 @@ function GhostSmsPage() {
     dbsRef.current = dbs;
   }, [dbs]);
 
+  const syncCloudDbs = useCallback(async () => {
+    try {
+      const cloudDbs = await getSavedDbsServer();
+      if (cloudDbs && Array.isArray(cloudDbs) && cloudDbs.length > 0) {
+        const formatted: DbEntry[] = cloudDbs.map((c) => ({
+          url: c.url,
+          label: c.label || labelForDb(c.url),
+        }));
+        const currentUrls = (dbsRef.current || []).map((d) => d.url).join(",");
+        const cloudUrls = formatted.map((d) => d.url).join(",");
+        if (currentUrls !== cloudUrls) {
+          saveDbs(formatted);
+          setDbs(formatted);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     const saved = loadDbs();
     const defaults = getDefaultDbEntries();
-    const map = new Map<string, DbEntry>();
-    for (const d of defaults) { map.set(d.url, d); }
-    for (const s of saved) { map.set(s.url, s); }
-    const combined = Array.from(map.values());
-    saveDbs(combined);
-    setDbs(combined);
+    if (saved && saved.length > 0) {
+      setDbs(saved);
+    } else {
+      setDbs(defaults);
+      saveDbs(defaults);
+    }
     setJobs(loadJobs());
 
-    // Asynchronously fetch globally added DBs from Cloudflare KV / shared cloud store
-    void getSavedDbsServer().then((cloudDbs) => {
-      if (cloudDbs && Array.isArray(cloudDbs) && cloudDbs.length > 0) {
-        for (const c of cloudDbs) { map.set(c.url, c); }
-        const mergedAll = Array.from(map.values());
-        saveDbs(mergedAll);
-        setDbs(mergedAll);
-      }
-    });
+    void syncCloudDbs();
 
     void getJobsServer().then((cloudJobs) => {
       if (cloudJobs && Array.isArray(cloudJobs) && cloudJobs.length > 0) {
@@ -314,7 +325,15 @@ function GhostSmsPage() {
         setJobs(mergedJobs);
       }
     });
-  }, []);
+  }, [syncCloudDbs]);
+
+  // Sync DBs globally across all open browser sessions every 5s
+  useEffect(() => {
+    const t = setInterval(() => {
+      void syncCloudDbs();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [syncCloudDbs]);
 
   const reload = useCallback(async (entries: DbEntry[]) => {
     abortRef.current?.abort();
@@ -364,8 +383,10 @@ function GhostSmsPage() {
   const onSaveDbs = (next: DbEntry[]) => {
     setDbs(next);
     saveDbs(next);
+    cloudPut("custom_dbs", next);
     void saveDbsServer({ data: next });
   };
+
 
   const executeJob = useCallback(async (jobId: string) => {
     const currentJobs = loadJobs();
