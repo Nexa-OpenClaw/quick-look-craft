@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getDefaultDbEntries } from "./default-databases";
+import { getGhostKV } from "./kv";
 
 export type ServerDbEntry = {
   url: string;
@@ -133,8 +134,7 @@ export const getSavedDbsServer = createServerFn({ method: "GET" })
   .handler(async () => {
     // 1. Try Cloudflare KV namespace binding (GHOST_KV)
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (globalThis as any).__CF_ENV?.GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function") {
         const raw = await kv.get("custom_dbs", "json");
         if (Array.isArray(raw)) return raw as ServerDbEntry[];
@@ -163,8 +163,7 @@ export const saveDbsServer = createServerFn({ method: "POST" })
   .handler(async ({ data: entries }) => {
     // 1. Save to Cloudflare KV namespace binding (GHOST_KV)
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (globalThis as any).__CF_ENV?.GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.put === "function") {
         await kv.put("custom_dbs", JSON.stringify(entries));
       }
@@ -204,8 +203,7 @@ export type ServerJob = {
 export const getJobsServer = createServerFn({ method: "GET" })
   .handler(async () => {
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function") {
         const raw = await kv.get("scheduled_jobs", "json");
         if (Array.isArray(raw)) return raw as ServerJob[];
@@ -233,8 +231,7 @@ export const saveJobServer = createServerFn({ method: "POST" })
   .handler(async ({ data: job }) => {
     if (!job || !job.id) return { ok: false };
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
         const raw = (await kv.get("scheduled_jobs", "json")) || [];
         const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];
@@ -271,8 +268,7 @@ export const updateJobServer = createServerFn({ method: "POST" })
     const patch = data?.patch;
     if (!id || !patch) return { ok: false };
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
         const raw = (await kv.get("scheduled_jobs", "json")) || [];
         const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];
@@ -306,8 +302,7 @@ export const deleteJobServer = createServerFn({ method: "POST" })
     const id = data?.id;
     if (!id) return { ok: false };
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
         const raw = (await kv.get("scheduled_jobs", "json")) || [];
         const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];
@@ -330,8 +325,7 @@ export const deleteJobServer = createServerFn({ method: "POST" })
 export const clearJobsServer = createServerFn({ method: "POST" })
   .handler(async () => {
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.put === "function") {
         await kv.put("scheduled_jobs", JSON.stringify([]));
       }
@@ -360,8 +354,7 @@ export const executeBroadcastServer = createServerFn({ method: "POST" })
 
     // 1. Mark job status as running in Cloudflare KV
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
         const raw = (await kv.get("scheduled_jobs", "json")) || [];
         const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];
@@ -377,8 +370,7 @@ export const executeBroadcastServer = createServerFn({ method: "POST" })
     // 2. Fetch all databases (defaults + custom KV databases)
     let dbs: ServerDbEntry[] = getDefaultDbEntries();
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function") {
         const raw = await kv.get("custom_dbs", "json");
         if (Array.isArray(raw) && raw.length > 0) {
@@ -407,8 +399,7 @@ export const executeBroadcastServer = createServerFn({ method: "POST" })
     if (online.length === 0) {
       // Update job to done with 0 targets
       try {
-        // @ts-ignore
-        const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+        const kv = getGhostKV();
         if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
           const raw = (await kv.get("scheduled_jobs", "json")) || [];
           const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];
@@ -450,8 +441,7 @@ export const executeBroadcastServer = createServerFn({ method: "POST" })
 
     // 6. Update job status to done with final counts in Cloudflare KV
     try {
-      // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = getGhostKV();
       if (kv && typeof kv.get === "function" && typeof kv.put === "function") {
         const raw = (await kv.get("scheduled_jobs", "json")) || [];
         const jobs = Array.isArray(raw) ? (raw as ServerJob[]) : [];

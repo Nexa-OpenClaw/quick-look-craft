@@ -47,10 +47,13 @@ function isH3SwallowedErrorBody(body: string): boolean {
 
 import { getDefaultDbEntries } from "./lib/default-databases";
 
+import { getGhostKV } from "./lib/kv";
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       if (env && typeof env === "object") {
+        (globalThis as any).__env__ = env;
         (globalThis as any).__CF_ENV = env;
         if ("GHOST_KV" in env) {
           (globalThis as any).GHOST_KV = (env as any).GHOST_KV;
@@ -64,9 +67,21 @@ export default {
           const body = (await request.json()) as { dbs?: ServerDbEntry[] } | ServerDbEntry[];
           const entries = Array.isArray(body) ? body : Array.isArray(body?.dbs) ? body.dbs : [];
           
-          const kv = (env as any)?.GHOST_KV || (globalThis as any).GHOST_KV;
+          const kv = getGhostKV(env);
+          let kvWritten = false;
+          let kvError: string | null = null;
+
           if (kv && typeof kv.put === "function") {
-            await kv.put("custom_dbs", JSON.stringify(entries));
+            try {
+              await kv.put("custom_dbs", JSON.stringify(entries));
+              kvWritten = true;
+            } catch (err: any) {
+              kvError = String(err?.message || err);
+              console.error("GHOST_KV put error:", err);
+            }
+          } else {
+            kvError = "GHOST_KV binding not found on request environment";
+            console.error(kvError);
           }
 
           try {
@@ -81,7 +96,7 @@ export default {
             }
           } catch { /* ignore */ }
 
-          return new Response(JSON.stringify({ ok: true, count: entries.length }), {
+          return new Response(JSON.stringify({ ok: true, kvWritten, kvError, count: entries.length }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (err) {
@@ -94,10 +109,10 @@ export default {
 
       if (url.pathname === "/api/get-dbs" && request.method === "GET") {
         try {
-          const kv = (env as any)?.GHOST_KV || (globalThis as any).GHOST_KV;
+          const kv = getGhostKV(env);
           if (kv && typeof kv.get === "function") {
             const raw = await kv.get("custom_dbs", "json");
-            if (Array.isArray(raw) && raw.length > 0) {
+            if (Array.isArray(raw)) {
               return new Response(JSON.stringify(raw), {
                 headers: { "Content-Type": "application/json" },
               });
@@ -110,8 +125,15 @@ export default {
             const r = await fetch(`${primaryUrl}/ghostSms/custom_dbs.json`);
             if (r.ok) {
               const val = await r.json();
-              if (Array.isArray(val)) {
-                return new Response(JSON.stringify(val), {
+              let arr: ServerDbEntry[] = [];
+              if (Array.isArray(val)) arr = val;
+              else if (val && typeof val === "object") arr = Object.values(val) as ServerDbEntry[];
+
+              if (arr.length > 0) {
+                if (kv && typeof kv.put === "function") {
+                  try { await kv.put("custom_dbs", JSON.stringify(arr)); } catch {}
+                }
+                return new Response(JSON.stringify(arr), {
                   headers: { "Content-Type": "application/json" },
                 });
               }
