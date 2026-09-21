@@ -280,17 +280,36 @@ function GhostSmsPage() {
 
   const syncCloudDbs = useCallback(async () => {
     try {
-      const cloudDbs = await getSavedDbsServer();
+      let cloudDbs: DbEntry[] | null = null;
+      try {
+        const res = await fetch("/api/get-dbs");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            cloudDbs = data.map((c: any) => ({
+              url: c.url,
+              label: c.label || labelForDb(c.url),
+            }));
+          }
+        }
+      } catch { /* ignore */ }
+
+      if (!cloudDbs) {
+        const serverDbs = await getSavedDbsServer();
+        if (serverDbs && Array.isArray(serverDbs) && serverDbs.length > 0) {
+          cloudDbs = serverDbs.map((c) => ({
+            url: c.url,
+            label: c.label || labelForDb(c.url),
+          }));
+        }
+      }
+
       if (cloudDbs && Array.isArray(cloudDbs) && cloudDbs.length > 0) {
-        const formatted: DbEntry[] = cloudDbs.map((c) => ({
-          url: c.url,
-          label: c.label || labelForDb(c.url),
-        }));
         const currentUrls = (dbsRef.current || []).map((d) => d.url).join(",");
-        const cloudUrls = formatted.map((d) => d.url).join(",");
+        const cloudUrls = cloudDbs.map((d) => d.url).join(",");
         if (currentUrls !== cloudUrls) {
-          saveDbs(formatted);
-          setDbs(formatted);
+          saveDbs(cloudDbs);
+          setDbs(cloudDbs);
         }
       }
     } catch { /* ignore */ }
@@ -384,8 +403,14 @@ function GhostSmsPage() {
     setDbs(next);
     saveDbs(next);
     cloudPut("custom_dbs", next);
+    void fetch("/api/save-dbs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dbs: next }),
+    }).catch(() => {});
     void saveDbsServer({ data: next });
   };
+
 
 
   const executeJob = useCallback(async (jobId: string) => {

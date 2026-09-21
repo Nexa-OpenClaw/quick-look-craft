@@ -134,7 +134,7 @@ export const getSavedDbsServer = createServerFn({ method: "GET" })
     // 1. Try Cloudflare KV namespace binding (GHOST_KV)
     try {
       // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = (globalThis as any).GHOST_KV || (globalThis as any).__CF_ENV?.GHOST_KV || (process as any).env?.GHOST_KV;
       if (kv && typeof kv.get === "function") {
         const raw = await kv.get("custom_dbs", "json");
         if (Array.isArray(raw)) return raw as ServerDbEntry[];
@@ -164,7 +164,7 @@ export const saveDbsServer = createServerFn({ method: "POST" })
     // 1. Save to Cloudflare KV namespace binding (GHOST_KV)
     try {
       // @ts-ignore
-      const kv = (globalThis as any).GHOST_KV || (process as any).env?.GHOST_KV;
+      const kv = (globalThis as any).GHOST_KV || (globalThis as any).__CF_ENV?.GHOST_KV || (process as any).env?.GHOST_KV;
       if (kv && typeof kv.put === "function") {
         await kv.put("custom_dbs", JSON.stringify(entries));
       }
@@ -185,6 +185,7 @@ export const saveDbsServer = createServerFn({ method: "POST" })
 
     return { ok: true };
   });
+
 
 export type ServerJob = {
   id: string;

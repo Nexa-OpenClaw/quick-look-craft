@@ -45,10 +45,89 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+import { getDefaultDbEntries } from "./lib/default-databases";
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      if (env && typeof env === "object") {
+        (globalThis as any).__CF_ENV = env;
+        if ("GHOST_KV" in env) {
+          (globalThis as any).GHOST_KV = (env as any).GHOST_KV;
+        }
+      }
+
       const url = new URL(request.url);
+
+      if (url.pathname === "/api/save-dbs" && (request.method === "POST" || request.method === "PUT")) {
+        try {
+          const body = (await request.json()) as { dbs?: ServerDbEntry[] } | ServerDbEntry[];
+          const entries = Array.isArray(body) ? body : Array.isArray(body?.dbs) ? body.dbs : [];
+          
+          const kv = (env as any)?.GHOST_KV || (globalThis as any).GHOST_KV;
+          if (kv && typeof kv.put === "function") {
+            await kv.put("custom_dbs", JSON.stringify(entries));
+          }
+
+          try {
+            const defaults = getDefaultDbEntries();
+            const primaryUrl = defaults[0]?.url.replace(/\/$/, "");
+            if (primaryUrl) {
+              await fetch(`${primaryUrl}/ghostSms/custom_dbs.json`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(entries),
+              });
+            }
+          } catch { /* ignore */ }
+
+          return new Response(JSON.stringify({ ok: true, count: entries.length }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err) {
+          return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      if (url.pathname === "/api/get-dbs" && request.method === "GET") {
+        try {
+          const kv = (env as any)?.GHOST_KV || (globalThis as any).GHOST_KV;
+          if (kv && typeof kv.get === "function") {
+            const raw = await kv.get("custom_dbs", "json");
+            if (Array.isArray(raw) && raw.length > 0) {
+              return new Response(JSON.stringify(raw), {
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+          }
+
+          const defaults = getDefaultDbEntries();
+          const primaryUrl = defaults[0]?.url.replace(/\/$/, "");
+          if (primaryUrl) {
+            const r = await fetch(`${primaryUrl}/ghostSms/custom_dbs.json`);
+            if (r.ok) {
+              const val = await r.json();
+              if (Array.isArray(val)) {
+                return new Response(JSON.stringify(val), {
+                  headers: { "Content-Type": "application/json" },
+                });
+              }
+            }
+          }
+
+          return new Response(JSON.stringify([]), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch {
+          return new Response(JSON.stringify([]), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
       if (url.pathname === "/api/fetch-dbs-chunk" && request.method === "POST") {
         try {
           const body = (await request.json()) as { dbs: ServerDbEntry[] };
@@ -76,4 +155,5 @@ export default {
     }
   },
 };
+
 
